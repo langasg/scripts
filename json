@@ -1,0 +1,17 @@
+{"System":{
+"Build": 120,
+"Unit": 1,
+"Uptime": 121,
+"Free RAM": 26680
+},
+"Sensors":[
+{
+"TaskName": "temperatura",
+"Temperature": 26.40,
+"Humidity": 24.30
+},
+{
+"TaskName": "Calefaccion",
+"Switch": 1.00
+}
+]}

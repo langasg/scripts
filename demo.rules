@@ -1,0 +1,587 @@
+import org.openhab.core.library.types.*
+import org.openhab.core.persistence.*
+import org.openhab.model.script.actions.*
+import java.util.*
+import org.openhab.action.*
+
+var Number counter = 1
+var Timer timer = null
+var Number caldera = 0
+var int gasto_c 
+/**
+ * This is a demo rule which simulates a real dimmer by reacting to increase/decrease commands 
+ * and posting an updated state on the bus 
+ */
+rule "Dimmed Light"
+	when
+		Item DimmedLight received command
+	then
+		var Number percent = 0
+		if(DimmedLight.state instanceof DecimalType) percent = DimmedLight.state as DecimalType 
+			
+		if(receivedCommand==INCREASE) percent = percent + 5
+		if(receivedCommand==DECREASE) percent = percent - 5
+
+		if(percent<0)   percent = 0
+		if(percent>100) percent = 100
+		postUpdate(DimmedLight, percent);
+end
+
+/**
+ * This rule demonstrates how a NumberItem can be used to easily control the local sound system.
+ * A selection widget in the UI provides easy access for this
+ */
+rule "Select Radio Station"
+	when
+		Item Radio_Station received command
+	then
+		switch(receivedCommand) {
+			case 0 : playStream(null)
+			case 1 : playStream("http://metafiles.gl-systemhaus.de/hr/hr3_2.m3u")
+			case 2 : playStream("http://mp3-live.swr3.de/swr3_m.m3u")
+			case 3 : playStream("http://edge.live.mp3.mdn.newmedia.nacamar.net/radioffh/livestream.mp3.m3u")
+		}
+end
+
+/**
+ * This rules controls the volume on the local host
+ */
+rule "Volume control"
+	when
+		Item Volume received command
+	then
+		if(receivedCommand instanceof PercentType) {
+			setMasterVolume(receivedCommand as PercentType)
+		} else {
+			if(receivedCommand==INCREASE) increaseMasterVolume(20)
+			if(receivedCommand==DECREASE) decreaseMasterVolume(20)	
+		}
+		postUpdate(Volume, masterVolume * 100)
+end
+
+/**
+ * The following rules help initializing the demo items with some helpful states.
+ */
+//rule "Initialize light states"
+//	when
+//		System started
+//	then
+//		Lights?.members.forEach(light|
+//			postUpdate(light, if(Math::random > 0.7) ON else OFF)
+//		)
+//end
+
+//rule "Initialize heating states"
+//	when 
+//		System started
+//	then
+//		Heating?.members.forEach(heating|
+//			postUpdate(heating, if(Math::random > 0.8) ON else OFF)
+//		)
+//		postUpdate(Temperature_Setpoint, 22)
+//end
+
+//rule "Initialize contact states"
+//	when 
+//		System started
+//	then
+//		Windows?.members.forEach(window|
+//			postUpdate(window, if(Math::random > 0.5) OPEN else CLOSED)
+//		)
+//end
+
+rule "Initialize Location"
+	when 
+		System started
+	then
+		DemoLocation.postUpdate(new PointType("40.3271916,-3.5104547"))
+end
+
+//rule "Set random room temperatures"
+//	when 
+//		System started or
+//		Time cron "0 0/5 * * * ?"
+//	then
+//		Temperature?.members.forEach(temperature|
+//			postUpdate(temperature, 20.0 + (25.0 - (Math::random * 50.0).intValue) / 10.0)
+//		)
+//end
+
+rule "Update max and min temperatures"
+when
+	Item Weather_Temperature changed or
+	Time cron "0 0 0 * * ?" or
+	System started
+then	
+	postUpdate(Weather_Temp_Max, Weather_Temperature.maximumSince(now.toDateMidnight).state)
+	postUpdate(Weather_Temp_Min, Weather_Temperature.minimumSince(now.toDateMidnight).state)
+	logInfo("Weather", "Temperature evolved of " + Weather_Temperature.deltaSince(now.minusMinutes(2)) + " degrees.")
+end
+
+/** shows how to use sensor values from the past */
+//rule "Persistence Demo"
+//when
+//	Time cron "0 * * * * ?"
+//then	
+//	if(Weather_Temperature.changedSince(now.minusMinutes(1))) {
+//		logInfo("PersistenceDemo", "2 minutes ago, the temperature was " + Weather_Temperature.historicState(now.minusMinutes(2)) + " degrees.")
+//	}
+//end
+
+/** 
+ * shows how to check recent switch states - very helpful to avoid executing something too often, just
+ * because somebody presses a button too often (e.g. sending a notification, if the doorbell button is pressed)
+ */
+rule "Persistence Demo 2"
+when
+	Item DemoSwitch received command
+then
+	if(!DemoSwitch.changedSince(now.minusSeconds(5))) {
+		logInfo("PersistenceDemo2", "You did not press this button during the last 5 seconds!")
+	}
+end
+
+rule "Timer Demo"
+when
+	Item Light_GF_Corridor_Ceiling received command
+then
+	if(receivedCommand==ON) {
+		if(timer==null) {
+			// first ON command, so create a timer to turn the light off again
+			timer = createTimer(now.plusSeconds(10)) [|
+				sendCommand(Light_GF_Corridor_Ceiling, OFF)
+			]
+		} else {
+			// subsequent ON command, so reschedule the existing timer
+			timer.reschedule(now.plusSeconds(10))
+		}
+	} else if(receivedCommand==OFF) {
+		// remove any previously scheduled timer
+		if(timer!=null) {
+			timer.cancel
+			timer = null
+		}	
+	}
+end
+
+// Creates an item that stores the last update time of this item
+rule "Records last weather update time"
+when
+  Item Weather_Temperature received update
+then
+  postUpdate(Weather_LastUpdate, new DateTimeType())
+end
+
+// This rule will be used to test Scale transformation service
+rule "Compute humidex"
+when
+        Item Weather_Temperature changed or
+	Item Weather_Humidity changed
+then
+	var Number T = Weather_Temperature.state as DecimalType
+	var Number H = Weather_Humidity.state as DecimalType	
+	var Number x = 7.5 * T/(237.7 + T)
+	var Number e = 6.112 * Math::pow(10, x.doubleValue) * H/100
+	var Number humidex = T + (new Double(5) / new Double(9)) * (e - 10)
+	postUpdate(Weather_Humidex, humidex)
+end
+
+
+
+rule "Comandos por voz"
+when
+Item VoiceCommand received command
+then
+var String command = VoiceCommand.state.toString.toLowerCase
+logInfo("Voice.Rec","VoiceCommand recibido "+command)
+
+if (command.contains("encender luz") {
+sendCommand(Light_Outdoor_Garage, ON)
+}
+
+else if (command.contains("apagar luz") {
+sendCommand(Light_Outdoor_Garage, OFF)
+}
+else if (command.contains("abrir puerta blanca") {
+sendCommand(Puerta_Entrada_SW, ON)
+}
+else if (command.contains("a limpiar rumba") {
+sendCommand(Roomba_GF_Living, ON)
+}
+else if (command.contains("a casa rumba") {
+sendCommand(Roomba_GF_Living, OFF)
+}
+else if (command.contains("encender caldera") {
+sendCommand(Heating_GF_Kitchen, ON)
+}
+else if (command.contains("apagar caldera") {
+sendCommand(Heating_GF_Kitchen, OFF)
+}
+else if (command.contains("garaje") {
+sendCommand(Puerta_Garaje_SW, ON)
+sendCommand(Puerta_Garaje_SW, OFF)
+}
+end
+
+
+rule "Encender garaje"
+when
+        Time cron "0 30 20  * * ?"
+then
+        sendCommand(Light_Outdoor_Garage, ON)
+end
+
+rule "Apagar garaje"
+when
+        Time cron "0 0 8  * * ?"
+then
+        sendCommand(Light_Outdoor_Garage, OFF)
+end
+rule "Puerta Coche Abierta"
+when   
+    Item Garage_Door2 changed from 0 to 1
+then
+sendTelegram("bot2", "La puerta del garaje esta abierta")
+end
+rule "Puerta Coche Cerrada"
+when
+    Item Garage_Door2 changed from 1 to 0
+then
+
+//sendMail("langasg@gmail.com","Puerta cerrada","La puerta del garaje esta cerrada")
+sendTelegram("bot2", "La puerta del garaje esta cerrada")
+end
+
+rule "Puerta blanca Abierta"
+when
+    Item Puerta_Etrada changed from 0 to 1
+then
+//sendMail("langasg@gmail.com","Puerta blanca abierta","La puerta blanca esta abierta")
+sendCommand(Puerta_Entrada_SW, OFF)
+sendTelegram("bot2", "La puerta blanca esta abierta")
+end
+
+rule "Puerta blanca Cerrada"
+when
+    Item Puerta_Etrada changed from 1 to 0
+then
+
+//sendMail("langasg@gmail.com","Puerta blanca cerrada","La puerta blanca esta cerrada")
+sendTelegram("bot2", "La puerta blanca esta cerrada")
+end
+
+rule "Temperature_FF_Bed Update max and min temperatures"
+when
+        Item Temperature_FF_Bed changed or
+        Time cron "0 0 0 * * ?" or
+        System started
+then
+        postUpdate(Temperature_FF_Bed_Max, Temperature_FF_Bed.maximumSince(now.toDateMidnight).state)
+        postUpdate(Temperature_FF_Bed_Min, Temperature_FF_Bed.minimumSince(now.toDateMidnight).state)
+        logInfo("Temperature_FF_Bed", "Temperature evolved of " + Temperature_FF_Bed.deltaSince(now.minusMinutes(2)) + " degrees.")
+end
+
+//rule "Temperature_FF_Bed Persistence Demo"
+//when
+//        Time cron "0 * * * * ?"
+//then
+//        if(Temperature_FF_Bed.changedSince(now.minusMinutes(1))) {
+//                logInfo("PersistenceDemo", "2 minutes ago, the temperature was " + Temperature_FF_Bed.historicState(now.minusMinutes(2)) + " degrees.")
+//        }
+//end
+
+// Creates an item that stores the last update time of this item
+rule "Records last Temperature_FF_Bed update time"
+when
+  Item Temperature_FF_Bed received update
+then
+  postUpdate(TempHumiBed_LastUpdate, new DateTimeType())
+end
+
+// This rule will be used to test Scale transformation service
+rule "Compute humidex Temperature_FF_Bed"
+when
+        Item Temperature_FF_Bed changed or
+        Item Humidity_FF_Bed changed
+then
+        var Number T = Temperature_FF_Bed.state as DecimalType
+        var Number H = Humidity_FF_Bed.state as DecimalType
+        var Number x = 7.5 * T/(237.7 + T)
+        var Number e = 6.112 * Math::pow(10, x.doubleValue) * H/100
+        var Number humidex = T + (new Double(5) / new Double(9)) * (e - 10)
+        postUpdate(Humidex_FF_Bed, humidex)
+end
+
+
+
+rule "Temperature_GF_Kitchen Update max and min temperatures"
+when
+        Item Temperature_GF_Kitchen changed or
+        Time cron "0 0 0 * * ?" or
+        System started
+then
+        postUpdate(Temperature_GF_Kitchen_Max, Temperature_GF_Kitchen.maximumSince(now.toDateMidnight).state)
+        postUpdate(Temperature_GF_Kitchen_Min, Temperature_GF_Kitchen.minimumSince(now.toDateMidnight).state)
+        logInfo("Temperature_GF_Kitchen", "Temperature evolved of " + Temperature_GF_Kitchen.deltaSince(now.minusMinutes(2)) + " degrees.")
+end
+//rule "Temperature_GF_Kitchen Persistence Demo"
+//when
+//        Time cron "0 * * * * ?"
+//then
+//        if(Temperature_GF_Kitchen.changedSince(now.minusMinutes(1))) {
+//                logInfo("PersistenceDemo", "2 minutes ago, the temperature was " + Temperature_GF_Kitchen.historicState(now.minusMinutes(2)) + " degrees.")
+//        }
+//end
+// Creates an item that stores the last update time of this item
+rule "Records last Temperature_GF_Kitchen update time"
+when
+  Item Temperature_GF_Kitchen received update
+then
+  postUpdate(TempHumiKit_LastUpdate, new DateTimeType())
+end
+// This rule will be used to test Scale transformation service
+rule "Compute humidex Temperature_GF_Kitchen"
+when
+        Item Temperature_GF_Kitchen changed or
+        Item Humidity_GF_Kitchen changed
+then
+        var Number T = Temperature_GF_Kitchen.state as DecimalType
+        var Number H = Humidity_GF_Kitchen.state as DecimalType
+        var Number x = 7.5 * T/(237.7 + T)
+        var Number e = 6.112 * Math::pow(10, x.doubleValue) * H/100
+        var Number humidex = T + (new Double(5) / new Double(9)) * (e - 10)
+        postUpdate(Humidex_GF_Kitchen, humidex)
+end
+
+rule "Caldera encendida"
+    when
+        Item Temperature_GF_Kitchen received update
+    then
+        // check for any temperature sensors in the house that are very high
+        if (Temperature_GF_Kitchen.state > 30) {
+		if (caldera==0){	        
+//        	     sendTelegram("bot2", "La caldera parece estar encendida")
+		     caldera=1	
+		}     
+        }
+    end
+rule "Caldera apagada"
+    when
+        Item Temperature_GF_Kitchen received update
+    then
+        // check for any temperature sensors in the house that are very high
+        if (Temperature_GF_Kitchen.state < 30) {
+                if (caldera==1){
+//                   sendTelegram("bot2", "La caldera se ha apagado")
+                     caldera=0
+                }
+        }
+    end
+
+
+rule "Temperature_GF_Living Update max and min temperatures"
+when
+        Item Temperature_GF_Living changed or
+        Time cron "0 0 0 * * ?" or
+        System started
+then
+        postUpdate(Temperature_GF_Living_Max, Temperature_GF_Living.maximumSince(now.toDateMidnight).state)
+        postUpdate(Temperature_GF_Living_Min, Temperature_GF_Living.minimumSince(now.toDateMidnight).state)
+        logInfo("Temperature_GF_Living", "Temperature evolved of " + Temperature_GF_Living.deltaSince(now.minusMinutes(2)) + " degrees.")
+//	sendTelegram("bot2", "La caldera se ha encendido %d minutos.",(gasto_caldera.state as DecimalType).intValue)
+//	postUpdate(gasto_caldera, 0)	
+end
+//rule "Temperature_GF_Living Persistence Demo"
+//when
+//        Time cron "0 * * * * ?"
+//then
+//        if(Temperature_GF_Living.changedSince(now.minusMinutes(1))) {
+//                logInfo("PersistenceDemo", "2 minutes ago, the temperature was " + Temperature_GF_Living.historicState(now.minusMinutes(2)) + " degrees.")
+//        }
+//end
+//rule "Pressure_BMP_GF_Living Persistence Demo"
+//when
+//        Time cron "0 * * * * ?"
+//then
+//        if(Pressure_BMP_GF_Living.changedSince(now.minusMinutes(1))) {
+//                logInfo("PersistenceDemo", "2 minutes ago, the temperature was " + Pressure_BMP_GF_Living.historicState(now.minusMinutes(2)) + " degrees.")
+//        }
+//end
+// Creates an item that stores the last update time of this item
+rule "Records last Temperature_GF_Living update time"
+when
+  Item Temperature_GF_Living received update
+then
+  postUpdate(TempHumiLiv_LastUpdate, new DateTimeType())
+end
+// This rule will be used to test Scale transformation service
+rule "Compute humidex Temperature_GF_Living"
+when
+        Item Temperature_GF_Living changed or
+        Item Humidity_GF_Living changed
+then
+        var Number T = Temperature_GF_Living.state as DecimalType
+        var Number H = Humidity_GF_Living.state as DecimalType
+        var Number x = 7.5 * T/(237.7 + T)
+        var Number e = 6.112 * Math::pow(10, x.doubleValue) * H/100
+        var Number humidex = T + (new Double(5) / new Double(9)) * (e - 10)
+        postUpdate(Humidex_GF_Living, humidex)
+end
+
+rule "heating time"
+when
+Time cron "0 0/1 * * * ?" or
+Item Cal_Hora1_ON changed or
+Item Cal_Min1_ON changed or
+Item Cal_Hora1_OFF changed or
+Item Cal_Min1_OFF changed or
+Item Cal_Hora2_ON changed or
+Item Cal_Min2_ON changed or
+Item Cal_Hora2_OFF changed or
+Item Cal_Min2_OFF changed or
+Item Cal_Hora3_ON changed or
+Item Cal_Min3_ON changed or
+Item Cal_Hora3_OFF changed or
+Item Cal_Min3_OFF changed or
+Item Temperature_Setpoint_Valle changed or
+Item Temperature_Setpoint_T1 changed or
+Item Temperature_Setpoint_T2 changed or
+Item Temperature_Setpoint_T3 changed or
+Item Temperature_Setpoint_ValleS changed or
+Item Temperature_Setpoint_T1S changed or
+Item Temperature_Setpoint_T2S changed or
+Item Temperature_Setpoint_T3S changed 
+then
+
+var int now1
+now1 = now.getMinuteOfDay
+now1 = now1.intValue
+
+var int alarm1
+alarm1 = (Cal_Hora1_ON.state as DecimalType).intValue * 60 + 
+(Cal_Min1_ON.state as DecimalType).intValue
+alarm1 = alarm1.intValue
+
+var int alarm2
+alarm2 = (Cal_Hora2_ON.state as DecimalType).intValue * 60 + 
+(Cal_Min2_ON.state as DecimalType).intValue
+alarm2 = alarm2.intValue
+
+var int alarm3
+alarm3 = (Cal_Hora3_ON.state as DecimalType).intValue * 60 + 
+(Cal_Min3_ON.state as DecimalType).intValue
+alarm3 = alarm3.intValue
+
+var int stopalarm1
+stopalarm1 = (Cal_Hora1_OFF.state as DecimalType).intValue * 60 + 
+(Cal_Min1_OFF.state as DecimalType).intValue
+stopalarm1 = stopalarm1.intValue
+
+var int stopalarm2
+stopalarm2 = (Cal_Hora2_OFF.state as DecimalType).intValue * 60 + 
+(Cal_Min2_OFF.state as DecimalType).intValue
+stopalarm2 = stopalarm2.intValue
+
+var int stopalarm3
+stopalarm3 = (Cal_Hora3_OFF.state as DecimalType).intValue * 60 + 
+(Cal_Min3_OFF.state as DecimalType).intValue
+stopalarm3 = stopalarm3.intValue
+
+if(Auto_Heating_GF_Kitchen.state==ON)
+{
+if (now1>=alarm1)
+{
+	if(now1<=stopalarm1)
+	{	if(Temperature_FF_Bed.state<=Temperature_Setpoint_T1.state){
+			if(Heating_GF_Kitchen.state==OFF){sendCommand(Heating_GF_Kitchen, ON)}}
+		else if(Temperature_GF_Living.state<=Temperature_Setpoint_T1S.state){if(Heating_GF_Kitchen.state==OFF){sendCommand(Heating_GF_Kitchen, ON)}}
+		else if((Temperature_FF_Bed.state>=Temperature_Setpoint_T1.state)||(Temperature_GF_Living.state>=Temperature_Setpoint_T1S.state)){if(Heating_GF_Kitchen.state==ON){sendCommand(Heating_GF_Kitchen, OFF)}}
+	}
+	else if (now1>=alarm2)
+	{ 
+		if(now1<=stopalarm2)
+        	{
+                 	if(Temperature_FF_Bed.state<=Temperature_Setpoint_T2.state){if(Heating_GF_Kitchen.state==OFF){sendCommand(Heating_GF_Kitchen, ON)}}
+                	else if(Temperature_GF_Living.state<=Temperature_Setpoint_T2S.state){if(Heating_GF_Kitchen.state==OFF){sendCommand(Heating_GF_Kitchen, ON)}}
+        		else if((Temperature_FF_Bed.state>=Temperature_Setpoint_T2.state)||(Temperature_GF_Living.state>=Temperature_Setpoint_T2S.state)){if(Heating_GF_Kitchen.state==ON){sendCommand(Heating_GF_Kitchen, OFF)}}
+		}
+		else if (now1>=alarm3)
+        	{
+                	if(now1<=stopalarm3)
+                	{
+                	 	if(Temperature_FF_Bed.state<=Temperature_Setpoint_T3.state){if(Heating_GF_Kitchen.state==OFF){sendCommand(Heating_GF_Kitchen, ON)}}
+                		else if(Temperature_GF_Living.state<=Temperature_Setpoint_T3S.state){if(Heating_GF_Kitchen.state==OFF){sendCommand(Heating_GF_Kitchen, ON)}}
+				else if((Temperature_FF_Bed.state>=Temperature_Setpoint_T3.state)||(Temperature_GF_Living.state>=Temperature_Setpoint_T3S.state)){if(Heating_GF_Kitchen.state==ON){sendCommand(Heating_GF_Kitchen, OFF)}}                	
+			}
+			else if (now1>=stopalarm3)
+        		{
+        		if(Temperature_FF_Bed.state<=Temperature_Setpoint_Valle.state){if(Heating_GF_Kitchen.state==OFF){sendCommand(Heating_GF_Kitchen, ON)}}
+			else if(Temperature_GF_Living.state<=Temperature_Setpoint_ValleS.state){if(Heating_GF_Kitchen.state==OFF){sendCommand(Heating_GF_Kitchen, ON)}}
+			else if((Temperature_FF_Bed.state>=Temperature_Setpoint_Valle.state)||(Temperature_GF_Living.state>=Temperature_Setpoint_ValleS.state)){if(Heating_GF_Kitchen.state==ON){sendCommand(Heating_GF_Kitchen, OFF)}}
+        		}
+		}
+		else if((now1>=stopalarm2)||(now1<=alarm3))
+        	{
+        	if(Temperature_FF_Bed.state<=Temperature_Setpoint_Valle.state){if(Heating_GF_Kitchen.state==OFF){sendCommand(Heating_GF_Kitchen, ON)}}
+		else if(Temperature_GF_Living.state<=Temperature_Setpoint_ValleS.state){if(Heating_GF_Kitchen.state==OFF){sendCommand(Heating_GF_Kitchen, ON)}}
+		else if((Temperature_FF_Bed.state>=Temperature_Setpoint_Valle.state)||(Temperature_GF_Living.state>=Temperature_Setpoint_ValleS.state)){if(Heating_GF_Kitchen.state==ON){sendCommand(Heating_GF_Kitchen, OFF)}}
+        	}
+        }
+	else if((now1>=stopalarm1)||(now1<=alarm2))
+	{
+	if(Temperature_FF_Bed.state<=Temperature_Setpoint_Valle.state){if(Heating_GF_Kitchen.state==OFF){sendCommand(Heating_GF_Kitchen, ON)}}
+	else if(Temperature_GF_Living.state<=Temperature_Setpoint_ValleS.state){if(Heating_GF_Kitchen.state==OFF){sendCommand(Heating_GF_Kitchen, ON)}}
+	else if((Temperature_FF_Bed.state>=Temperature_Setpoint_Valle.state)||(Temperature_GF_Living.state>=Temperature_Setpoint_ValleS.state)){if(Heating_GF_Kitchen.state==ON){sendCommand(Heating_GF_Kitchen, OFF)}}
+	}
+}
+else if(now1<=alarm1)
+{
+if(Temperature_FF_Bed.state<=Temperature_Setpoint_Valle.state){if(Heating_GF_Kitchen.state==OFF){sendCommand(Heating_GF_Kitchen, ON)}}
+else if(Temperature_GF_Living.state<=Temperature_Setpoint_ValleS.state){if(Heating_GF_Kitchen.state==OFF){sendCommand(Heating_GF_Kitchen, ON)}}
+else if((Temperature_FF_Bed.state>=Temperature_Setpoint_Valle.state)||(Temperature_GF_Living.state>=Temperature_Setpoint_ValleS.state)){if(Heating_GF_Kitchen.state==ON){sendCommand(Heating_GF_Kitchen, OFF)}}
+}
+}
+//if(Heating_GF_Kitchen.state==ON){
+//gasto_c = (gasto_caldera.state as DecimalType).intValue + 1
+//gasto_c = gasto_c.intValue				 
+
+//				 postUpdate(gasto_caldera, gasto_c)
+
+//}
+end
+rule "Gasto caldera"
+when
+        Time cron "0 */1 * * * ?"
+then
+if(Heating_GF_Kitchen.state==ON){
+//var int gasto_c
+gasto_c = (gasto_caldera.state as DecimalType).intValue + 1
+gasto_c = gasto_c.intValue
+
+// gasto_c = (gasto_caldera.state as DecimalType).intValue
+//                              gasto_c = (gasto_caldera.state as DecimalType).intValue + 1
+//                              gasto_c = gasto_c.intValue
+                                 postUpdate(gasto_caldera, gasto_c)
+
+}
+
+end
+rule "Heating Timer"
+when
+        Time cron "0 0 23 * * ?" 
+then
+     	gasto_c = (gasto_caldera.state as DecimalType).intValue
+	gasto_c = gasto_c.intValue
+	 sendTelegram("bot2", "La caldera se ha encendido %d minutos.",gasto_c)
+      postUpdate(gasto_caldera, gasto_c)
+      executeCommandLine("sudo /root/script_gasto_caldera.sh")
+      postUpdate(gasto_caldera, 0)
+     // gasto_c = 0
+end
+rule "Puerta_Garaje_SW"
+		when 
+			Item Puerta_Garaje_SW received command ON
+		then
+			executeCommandLine("sudo /root/garaje.sh")
+			sendCommand(Puerta_Garaje_SW, OFF)
+end
